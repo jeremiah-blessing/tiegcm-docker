@@ -178,7 +178,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TGCMDATA=/data \
     PATH=/opt/sw/esmf/bin:/opt/sw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     OMPI_ALLOW_RUN_AS_ROOT=1 \
-    OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+    OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 \
+    LOGNAME=tiegcm \
+    USER=tiegcm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgfortran5 \

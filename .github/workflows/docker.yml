@@ -76,14 +76,25 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Choose build platforms
+        id: platforms
+        run: |
+          # Multi-arch (amd64 + arm64) when pushing — Docker Hub stores the
+          # manifest list. When NOT pushing (PR or manual-no-push), build
+          # amd64 only and load into the local daemon for smoke-testing,
+          # because the docker exporter can't load manifest lists.
+          if [ "${{ steps.push_decision.outputs.push }}" = "true" ]; then
+            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          else
+            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build & (maybe) push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          # Build amd64 natively + arm64 under QEMU. Drop arm64 if build
-          # times become a problem — QEMU emulation is slow.
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.platforms.outputs.platforms }}
           push: ${{ steps.push_decision.outputs.push == 'true' }}
           load: ${{ steps.push_decision.outputs.push != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -93,10 +104,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke-test image (amd64 only)
+      - name: Smoke-test image
         if: steps.push_decision.outputs.push != 'true'
         run: |
-          # `load: true` above only loads the host-arch image into the local
-          # daemon, so this only runs on amd64 (the GHA runner arch).
           docker run --rm ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} \
               bash -c 'ls -lh /opt/tiegcm/exec/tiegcm && /opt/tiegcm/exec/tiegcm 2>&1 | head -5 || true'

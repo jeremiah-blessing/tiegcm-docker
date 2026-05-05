@@ -1,0 +1,102 @@
+name: Build & Publish
+
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      tiegcm_ref:
+        description: "TIEGCM ref (branch / tag / SHA) to build"
+        required: false
+        default: master
+      push_image:
+        description: "Push to Docker Hub even on a manual run?"
+        required: false
+        type: boolean
+        default: false
+
+# Required repository secrets:
+#   DOCKERHUB_USERNAME  — Docker Hub username
+#   DOCKERHUB_TOKEN     — a Docker Hub access token (NOT your password)
+# Optional repository variable:
+#   DOCKERHUB_IMAGE     — image name on Docker Hub
+#                         (default: <username>/<repo-name>)
+
+env:
+  REGISTRY: docker.io
+  # Falls back to <username>/<repo-name> if DOCKERHUB_IMAGE is not set.
+  IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE || format('{0}/{1}', secrets.DOCKERHUB_USERNAME, github.event.repository.name) }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for cross-arch builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Decide whether to push
+        id: push_decision
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "push=${{ inputs.push_image }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.push_decision.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & (maybe) push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # Build amd64 natively + arm64 under QEMU. Drop arm64 if build
+          # times become a problem — QEMU emulation is slow.
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.push_decision.outputs.push == 'true' }}
+          load: ${{ steps.push_decision.outputs.push != 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            TIEGCM_REF=${{ inputs.tiegcm_ref || 'master' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test image (amd64 only)
+        if: steps.push_decision.outputs.push != 'true'
+        run: |
+          # `load: true` above only loads the host-arch image into the local
+          # daemon, so this only runs on amd64 (the GHA runner arch).
+          docker run --rm ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} \
+              bash -c 'ls -lh /opt/tiegcm/exec/tiegcm && /opt/tiegcm/exec/tiegcm 2>&1 | head -5 || true'

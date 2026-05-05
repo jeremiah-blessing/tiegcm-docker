@@ -1,0 +1,71 @@
+#!/bin/bash
+#
+# Build-only job script used inside the Docker image. It is a stripped-down
+# copy of scripts/tiegcm-linux.job:
+#   - execdir is /opt/tiegcm/exec (lives inside the image, not /scratch)
+#   - make file points at our gfortran/OpenMPI fragment
+#   - execute=FALSE (the container runs the binary at `docker run` time)
+#
+set -e
+
+modeldir=${TGCMROOT:-/opt/tiegcm}
+execdir=${modeldir}/exec
+utildir=${modeldir}/scripts
+input=${utildir}/tiegcm_default.inp
+output=tiegcm.out
+make=Make.gfort_docker
+horires="2.5"
+vertres="0.25"
+zitop="7"
+mres="2"
+coupling="FALSE"
+hidra="FALSE"
+nproc=4
+debug="FALSE"
+
+mkdir -p "$execdir"
+srcdir="$modeldir/src"
+
+if [ "$mres" = "2" ];   then nres_grid=5
+elif [ "$mres" = "1" ]; then nres_grid=6
+elif [ "$mres" = "0.5" ]; then nres_grid=7
+else echo "Unsupported magnetic resolution $mres"; exit 1
+fi
+
+cp "$utildir/$make"     "$execdir/"
+cp "$utildir/Makefile"  "$execdir/"
+cp "$utildir/mkdepends" "$execdir/"
+
+cat > "$execdir/defs.h" <<EOF
+#define DLAT $horires
+#define DLON $horires
+#define GLON1 -180
+#define DLEV $vertres
+#define ZIBOT -7
+#define ZITOP $zitop
+#define NRES_GRID $nres_grid
+EOF
+
+cat > "$execdir/Make.env" <<EOF
+MAKE_MACHINE  = $make
+DIRS          = . $srcdir
+NPROC         = $nproc
+EXECNAME      = tiegcm
+NAMELIST      = $input
+OUTPUT        = $output
+COUPLING      = $coupling
+HIDRA         = $hidra
+DEBUG         = $debug
+SVN_REVISION  = tiegcm3.0
+EOF
+
+echo "$coupling" > "$execdir/coupling"
+echo "$hidra"    > "$execdir/hidra"
+echo "$debug"    > "$execdir/debug"
+
+cd "$execdir"
+make machines.ini
+make mpirun.command
+make -j"${MAKE_JOBS:-4}" all
+
+echo "TIEGCM binary built at $execdir/tiegcm"

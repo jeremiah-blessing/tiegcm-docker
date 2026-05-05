@@ -76,25 +76,17 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Choose build platforms
-        id: platforms
-        run: |
-          # Multi-arch (amd64 + arm64) when pushing — Docker Hub stores the
-          # manifest list. When NOT pushing (PR or manual-no-push), build
-          # amd64 only and load into the local daemon for smoke-testing,
-          # because the docker exporter can't load manifest lists.
-          if [ "${{ steps.push_decision.outputs.push }}" = "true" ]; then
-            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-          else
-            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build & (maybe) push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          platforms: ${{ steps.platforms.outputs.platforms }}
+          # amd64 only — upstream NCAR/tiegcm targets x86_64 Linux (Derecho,
+          # Pleiades). Apple Silicon hosts can still run this image via
+          # Rosetta. To add native arm64, append ",linux/arm64" — note that
+          # arm64 builds run under QEMU on free GHA runners and are 3-5x
+          # slower than amd64.
+          platforms: linux/amd64
           push: ${{ steps.push_decision.outputs.push == 'true' }}
           load: ${{ steps.push_decision.outputs.push != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}

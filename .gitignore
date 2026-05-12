@@ -11,3 +11,7 @@ tiegcm-data/
 work/
 tiegcm_data/
 *.nc
+.claude
+.venv/
+*.ipynb_checkpoints/
+*.cdf

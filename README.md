@@ -33,7 +33,7 @@ Tested on macOS (M3) under Rosetta emulation.
 ### 1. Build the image (one-time per upstream change)
 
 ```bash
-cd /Users/jeremiah/projects/tiegcm/local-linux-setup
+cd /Users/jeremiah/projects/tiegcm-docker
 docker build --platform=linux/amd64 -t tiegcm:local .
 ```
 
@@ -42,6 +42,27 @@ docker build --platform=linux/amd64 -t tiegcm:local .
   solve.
 - A build-time check verifies `mpif90` / `gfortran` / `nf-config` /
   `ESMFMKFILE` are wired up — green build = working env.
+
+#### Optional: fat image with data pre-baked (`tiegcm:full`)
+
+If you already have all 6 data files on disk and want a single
+self-contained image (no bind-mount needed for input data — useful for
+shipping to a DigitalOcean droplet via `docker save | ssh`), build the
+fat variant from `Dockerfile.full`:
+
+```bash
+cd /Users/jeremiah/projects/tiegcm-docker
+# slim image must exist first (Dockerfile.full builds FROM it)
+docker build --platform=linux/amd64 -t tiegcm:local .
+# hard-copy data into the build context (symlinks across context don't work)
+cp -R /Users/jeremiah/projects/tiegcm-wd/data ./tiegcm-data
+docker build --platform=linux/amd64 -f Dockerfile.full -t tiegcm:full .
+rm -rf ./tiegcm-data
+```
+
+`tiegcm-data/` is in `.gitignore` so the staging copy never ends up in
+git. This variant is local-only — CI can't build it (2 of the 6 data
+files are Globus-gated).
 
 ### 2. Set up host working directory (one-time)
 

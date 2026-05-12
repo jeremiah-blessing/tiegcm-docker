@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1.6
+#
+# TIEGCM v3.0 — "fat" image variant with data files baked in.
+#
+# Builds FROM the slim tiegcm:local image and copies the 6 required data
+# files into /workspace/tiegcm-data/ so the container is fully
+# self-contained (no host bind-mount required).
+#
+# Local-only: 2 of the 6 files (he_coefs_dres.nc and the v3.0 prim
+# startup) are only on the NCAR Globus share, so this can't be built in
+# CI. Build it on a machine that already has the data staged.
+#
+# Build steps:
+#   1. Make sure the slim image exists:
+#        docker build --platform=linux/amd64 -t tiegcm:local .
+#   2. Hard-copy the 6 data files into the build context (symlinks
+#      pointing outside the build context don't work — Docker won't follow
+#      them):
+#        cp -R /Users/jeremiah/projects/tiegcm-wd/data ./tiegcm-data
+#   3. Build the fat image:
+#        docker build --platform=linux/amd64 -f Dockerfile.full \
+#            -t tiegcm:full .
+#   4. Remove the staging dir (don't commit 540 MB to the repo —
+#      tiegcm-data/ is already in .gitignore but the disk doesn't care):
+#        rm -rf ./tiegcm-data
+#
+# Run:
+#   docker run --rm -it --platform=linux/amd64 \
+#       -v /Users/jeremiah/projects/tiegcm-wd/run:/workspace/tiegcm-run \
+#       tiegcm:full
+#   # Inside container:
+#   cd $TIEGCMHOME/scripts && bash tiegcm-linux-local.job
+#
+# Note: still bind-mount tiegcm-run so history files persist on the host;
+# only the input data is baked in.
+#
+FROM tiegcm:local
+
+COPY tiegcm-data/ /workspace/tiegcm-data/
+
+# Verify the 6 expected files are present so a missing file fails at build
+# time rather than at run time.
+RUN set -e; \
+    cd /workspace/tiegcm-data && \
+    for f in gswm_diurn_2.5d_99km.nc \
+             gswm_semi_2.5d_99km.nc \
+             gswm_nonmig_diurn_2.5d_99km.nc \
+             gswm_nonmig_semi_2.5d_99km.nc \
+             he_coefs_dres.nc \
+             tiegcm_2.5x0.25_z7_mareqx_smin_prim.nc; do \
+        test -s "$f" || { echo "MISSING or empty: $f" >&2; exit 1; }; \
+    done && \
+    echo "All 6 TIEGCM data files baked in:" && \
+    ls -lh /workspace/tiegcm-data/

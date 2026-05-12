@@ -22,6 +22,7 @@ Both are siblings of this repo under `/Users/jeremiah/projects/`. Read from them
 | `tiegcm-linux-local.job` | Build + run driver; honors `TIEGCM_*` env vars |
 | `tiegcm_mareqx_smin_z11.inp` | Baked-in v3.0 namelist (1-day run from mareqx smin startup) |
 | `tiegcm_test10.inp` | 10-timestep smoke namelist for quick verification |
+| `Dockerfile.full` | Local-only fat-image variant bundling the 6 data files (see "Image variants" below) |
 | `.github/workflows/docker.yml` | Build & push amd64 image to Docker Hub |
 | `README.md` | End-to-end recipe + gotchas (keep this current) |
 
@@ -63,6 +64,36 @@ cd $TIEGCMHOME/scripts && bash tiegcm-linux-local.job
 TIEGCM_INP=/workspace/tiegcm/scripts/tiegcm_test10.inp \
   bash $TIEGCMHOME/scripts/tiegcm-linux-local.job
 ```
+
+## Image variants
+
+There are two image flavors. Both are amd64-only.
+
+### `tiegcm:local` (slim — what CI publishes)
+
+- Built from `Dockerfile`.
+- ~3 GB. Expects users to bind-mount `tiegcm-data/` from the host.
+- Published to Docker Hub on every push to `master` via GHA.
+- The only image suitable for CI / arbitrary droplets / sharing.
+
+### `tiegcm:full` (fat — local builds only, NOT pushed to Hub)
+
+- Built from `Dockerfile.full`. Inherits from `tiegcm:local`, then `COPY`s in the 6 data files (~540 MB) under `/workspace/tiegcm-data/`.
+- Self-contained: no bind-mount needed for input data (only bind-mount `tiegcm-run/` if you want history files to persist on the host).
+- **Not CI-buildable** — 2 of the 6 files (`he_coefs_dres.nc`, the z=11 prim startup) live only on the NCAR Globus share. Build it on the user's Mac where the data is already staged at `/Users/jeremiah/projects/tiegcm-wd/data/`.
+- Build steps:
+  ```bash
+  cd /Users/jeremiah/projects/tiegcm-docker
+  docker build --platform=linux/amd64 -t tiegcm:local .          # make sure slim exists
+  cp -R /Users/jeremiah/projects/tiegcm-wd/data ./tiegcm-data    # hard-copy (symlinks don't work for cross-context COPY)
+  docker build --platform=linux/amd64 -f Dockerfile.full -t tiegcm:full .
+  rm -rf ./tiegcm-data
+  ```
+- To ship to a DigitalOcean droplet without Docker Hub:
+  ```bash
+  docker save tiegcm:full | gzip | ssh droplet 'gunzip | docker load'
+  ```
+- `tiegcm-data/` is in `.gitignore`; don't commit data files.
 
 ## Where outputs go
 

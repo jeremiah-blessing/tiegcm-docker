@@ -15,10 +15,13 @@ tgcmdata="${TIEGCMDATA:-/workspace/tiegcm-data}"
 utildir="$modeldir/scripts"
 # Namelist resolution order:
 #   1. TIEGCM_INP env var (set this to point at a custom .inp on the host mount)
-#   2. baked-in v3.0-ready namelist for the mareqx_smin z=11 scenario
-#   3. repo's tiegcm_default.inp (v2.0-style timestamps, won't work with v3.0 data)
+#   2. baked-in 10-step smoke namelist (fast default — finishes in seconds)
+#   3. baked-in v3.0-ready full-day namelist for the mareqx_smin z=11 scenario
+#   4. repo's tiegcm_default.inp (v2.0-style timestamps, won't work with v3.0 data)
 if [ -n "$TIEGCM_INP" ]; then
     input="$TIEGCM_INP"
+elif [ -f "$utildir/tiegcm_test10.inp" ]; then
+    input="$utildir/tiegcm_test10.inp"
 elif [ -f "$utildir/tiegcm_mareqx_smin_z11.inp" ]; then
     input="$utildir/tiegcm_mareqx_smin_z11.inp"
 else

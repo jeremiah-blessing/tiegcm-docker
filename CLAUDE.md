@@ -20,8 +20,8 @@ Both are siblings of this repo under `/Users/jeremiah/projects/`. Read from them
 | `tiegcm-entrypoint.sh` | Container ENTRYPOINT that activates conda env |
 | `Make.gfort_linux` | gfortran build flags pointing at `$CONDA_PREFIX` |
 | `tiegcm-linux-local.job` | Build + run driver; honors `TIEGCM_*` env vars |
-| `tiegcm_mareqx_smin_z11.inp` | Baked-in v3.0 namelist (1-day run from mareqx smin startup) |
-| `tiegcm_test10.inp` | 10-timestep smoke namelist for quick verification |
+| `tiegcm_test10.inp` | **Default** baked-in 10-timestep smoke namelist (~5 model-min, finishes in seconds) |
+| `tiegcm_mareqx_smin_z11.inp` | Baked-in v3.0 namelist for full 1-day run (mareqx smin startup); use via `TIEGCM_INP` |
 | `Dockerfile.full` | Local-only fat-image variant bundling the 6 data files (see "Image variants" below) |
 | `.github/workflows/docker.yml` | Build & push amd64 image to Docker Hub |
 | `README.md` | End-to-end recipe + gotchas (keep this current) |
@@ -31,8 +31,8 @@ Both are siblings of this repo under `/Users/jeremiah/projects/`. Read from them
 These were painful to learn. The baked-in setup fixes each; only revisit if symptoms recur:
 
 1. **`nproc=1` is the default.** Multi-rank Open MPI segfaults during early dynamics setup under Rosetta on Apple Silicon. On native amd64 hosts (DigitalOcean), override with `TIEGCM_NPROC=4`. Don't change the default — it'd break Mac users.
-2. **`START_DAY` must equal `PRISTART` day** when `CALENDAR_ADVANCE=1`. The baked `.inp` uses `81` for both. If you change one, change the other or set `CALENDAR_ADVANCE=0`.
-3. **`he_coefs_dres.nc` is required** when the namelist has `CALC_HELIUM = 1`. It's only on Globus; the README data-shopping section flags this.
+2. **`START_DAY` must equal `PRISTART` day** when `CALENDAR_ADVANCE=1` (TIEGCM's default when the field is omitted). Both baked `.inp` files use `81` for both. If you change one, change the other or set `CALENDAR_ADVANCE=0`.
+3. **`he_coefs_dres.nc` is required** when `CALC_HELIUM = 1` (TIEGCM's default when the field is omitted). It's only on Globus; the README data-shopping section flags this.
 4. **The v3.0 startup file is z=11** (73 levels) even though its filename says `z7`. We renamed the local copy to match the namelist's `SOURCE` path; don't be confused by the filename. Build defaults to `zitop=11` to match.
 5. **OpenMPI refuses to run as root** by default. Image sets `OMPI_ALLOW_RUN_AS_ROOT=1`/`_CONFIRM=1` plus `LOGNAME=root`/`USER=root` so the model finds `getenv("LOGNAME")`.
 6. **Build context is just this folder** — the Dockerfile clones tiegcm itself from GitHub. Don't `cd` into the parent before `docker build`.
@@ -54,14 +54,14 @@ docker run --rm -it --platform=linux/amd64 \
   tiegcm:local
 ```
 
-**Inside container — full run:**
+**Inside container — default (10-step smoke run):**
 ```bash
 cd $TIEGCMHOME/scripts && bash tiegcm-linux-local.job
 ```
 
-**Inside container — 10-step smoke run:**
+**Inside container — full 1-day run:**
 ```bash
-TIEGCM_INP=/workspace/tiegcm/scripts/tiegcm_test10.inp \
+TIEGCM_INP=/workspace/tiegcm/scripts/tiegcm_mareqx_smin_z11.inp \
   bash $TIEGCMHOME/scripts/tiegcm-linux-local.job
 ```
 

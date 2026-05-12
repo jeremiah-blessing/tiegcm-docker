@@ -66,6 +66,7 @@ RUN git clone --depth 1 --branch master https://github.com/NCAR/tiegcm.git /work
 COPY Make.gfort_linux               /workspace/tiegcm/scripts/Make.gfort_linux
 COPY tiegcm-linux-local.job         /workspace/tiegcm/scripts/tiegcm-linux-local.job
 COPY tiegcm_mareqx_smin_z11.inp     /workspace/tiegcm/scripts/tiegcm_mareqx_smin_z11.inp
+COPY tiegcm_test10.inp              /workspace/tiegcm/scripts/tiegcm_test10.inp
 COPY setup-local.sh                 /workspace/setup-local.sh
 COPY tiegcm-entrypoint.sh           /usr/local/bin/tiegcm-entrypoint.sh
 RUN chmod +x /workspace/tiegcm/scripts/tiegcm-linux-local.job \

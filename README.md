@@ -15,7 +15,8 @@ Tested on macOS (M3) under Rosetta emulation.
 | `Dockerfile` | image recipe — clones source, installs conda env, copies the files below |
 | `Make.gfort_linux` | gfortran build flags pointing at the conda env |
 | `tiegcm-linux-local.job` | build + run driver; honors `TIEGCM_INP` env var |
-| `tiegcm_mareqx_smin_z11.inp` | v3.0-ready namelist (mareqx_smin, z=11, day 81→82) |
+| `tiegcm_test10.inp` | **default** 10-step smoke namelist (~5 model-min, finishes in seconds) |
+| `tiegcm_mareqx_smin_z11.inp` | full-day v3.0-ready namelist (mareqx_smin, z=11, day 81→82) |
 | `tiegcm-entrypoint.sh` | container entrypoint — activates conda env, sets env vars |
 | `setup-local.sh` | (advanced) manual installer for bare-metal Linux, not used by Docker |
 | `README.md` | this file |
@@ -145,28 +146,15 @@ bash tiegcm-linux-local.job
 ```
 
 That's it. The job script:
-- Auto-picks `tiegcm_mareqx_smin_z11.inp` (baked-in v3.0-ready namelist).
+- Auto-picks `tiegcm_test10.inp` — a 10 × 30s smoke run (~5 model-min,
+  finishes in seconds after the build). Override with `TIEGCM_INP` for a
+  longer integration (see below).
 - Uses `zitop=11` (matches v3.0 startup files — 73 vertical levels).
 - Runs `mpirun -np 1 ./tiegcm` (default; raise with `TIEGCM_NPROC` on
   native amd64 — see env-var table below).
 
-First-ever run = full build (~5–10 min) + 1-day integration
-(15–45 min on M3 under Rosetta, faster on native amd64). Subsequent runs
-reuse the binary.
-
-#### Quick smoke run (10 timesteps, ~5 model-minutes)
-
-To confirm the build is healthy without waiting for a full day-long
-integration, point the job script at the bundled tiny namelist:
-
-```bash
-TIEGCM_INP=/workspace/tiegcm/scripts/tiegcm_test10.inp \
-    bash /workspace/tiegcm/scripts/tiegcm-linux-local.job
-```
-
-This runs 10 × 30s timesteps (= 5 minutes of simulated time) and writes
-one primary + a handful of secondary histories. Useful as a sanity check
-after rebuilding the image or changing build flags.
+First-ever run = full build (~5–10 min) + the 10-step integration
+(seconds). Subsequent runs reuse the binary.
 
 Watch progress in another shell:
 ```bash
@@ -178,9 +166,23 @@ Success marker near the end: `Linux MPI run of ./tiegcm completed at ...`
 plus new `.nc` files in the execdir:
 ```bash
 ls -lh /workspace/tiegcm-run/default/*.nc
-# → tiegcm_mareqx_smin_z11_prim_001.nc
-#   tiegcm_mareqx_smin_z11_sech_001.nc
+# → tiegcm_test10_prim_001.nc
+#   tiegcm_test10_sech_001.nc
 ```
+
+#### Full-day run (mareqx_smin, day 81→82)
+
+The longer baked-in namelist is also in `$TIEGCMHOME/scripts/`. Point
+`TIEGCM_INP` at it for a full 1-day integration (~15–45 min on M3 under
+Rosetta, faster on native amd64):
+
+```bash
+TIEGCM_INP=/workspace/tiegcm/scripts/tiegcm_mareqx_smin_z11.inp \
+    bash /workspace/tiegcm/scripts/tiegcm-linux-local.job
+```
+
+Outputs land in the same execdir as
+`tiegcm_mareqx_smin_z11_prim_001.nc` / `..._sech_001.nc`.
 
 History files persist on your Mac at
 `/Users/jeremiah/projects/tiegcm-wd/run/default/`.
@@ -212,7 +214,7 @@ the baked-in defaults:
 
 | Env var | Default | Effect |
 |---|---|---|
-| `TIEGCM_INP` | baked-in `tiegcm_mareqx_smin_z11.inp` | path to your custom namelist |
+| `TIEGCM_INP` | baked-in `tiegcm_test10.inp` (10-step smoke) | path to your custom namelist — e.g. `/workspace/tiegcm/scripts/tiegcm_mareqx_smin_z11.inp` for the full-day run |
 | `TIEGCM_ZITOP` | `11` | upper boundary pressure level (7 = low top, 11 = high top) |
 | `TIEGCM_NPROC` | `1` | MPI process count. Default is 1 because >1 segfaults under Open MPI + Rosetta on Apple Silicon; on native amd64 (e.g. DigitalOcean droplets) you can safely raise it (`TIEGCM_NPROC=4`). |
 | `TIEGCM_DEBUG` | `FALSE` | `TRUE` → `-Og -fcheck=all -fbacktrace` |
@@ -259,7 +261,8 @@ slower but with bounds checking and stack traces on crash.
 | `/workspace/tiegcm/` | source (cloned latest master) |
 | `/workspace/tiegcm/scripts/Make.gfort_linux` | gfortran build flags |
 | `/workspace/tiegcm/scripts/tiegcm-linux-local.job` | build + run driver |
-| `/workspace/tiegcm/scripts/tiegcm_mareqx_smin_z11.inp` | baked-in v3.0-ready namelist |
+| `/workspace/tiegcm/scripts/tiegcm_test10.inp` | baked-in 10-step smoke namelist (default) |
+| `/workspace/tiegcm/scripts/tiegcm_mareqx_smin_z11.inp` | baked-in full-day v3.0 namelist |
 | `/workspace/tiegcm-run/` | execdir (host bind mount) |
 | `/workspace/tiegcm-data/` | tgcmdata (host bind mount) |
 | `/usr/local/bin/tiegcm-entrypoint.sh` | activates env + sets env vars |
@@ -273,18 +276,18 @@ Baked-in env vars: `TIEGCMHOME`, `TIEGCMDATA`, `ESMFMKFILE`, `LOGNAME=root`,
   `OMPI_ALLOW_RUN_AS_ROOT=1` is baked into the image's ENV. Won't recur.
 - **`>>> INPUT inp_model: Cannot get LOGNAME environment variable`** —
   `LOGNAME=root` is baked in.
-- **`No such file or directory at opening …/he_coefs_dres.nc`** — you need
-  `he_coefs_dres.nc` because the namelist has `CALC_HELIUM = 1`. Download it
-  from the Globus root.
+- **`No such file or directory at opening …/he_coefs_dres.nc`** — both
+  baked-in namelists default to `CALC_HELIUM = 1` (TIEGCM's default), so
+  you need `he_coefs_dres.nc` from the Globus root.
 - **`Source history not found`** — startup file timestamp doesn't match
-  `SOURCE_START`. The baked-in `.inp` uses `81 0 0 0` matching the v3.0
-  `mareqx_smin` file. If you bring a different startup file, run
+  `SOURCE_START`. Both baked-in `.inp` files use `81 0 0 0` matching the
+  v3.0 `mareqx_smin` file. If you bring a different startup file, run
   `ncdump -v mtime <file>` to see its actual `mtime` and align the `.inp`.
 - **`Shutdown: stop message: PRISTART`** with `"starting model day must
-  be equal to the starting calendar day"` — when `CALENDAR_ADVANCE = 1`,
-  `START_DAY` must equal the day component of `PRISTART`. The baked-in
-  `.inp` uses `START_DAY = 81` and `PRISTART = 81 0 0 0`. If you change
-  one, change the other.
+  be equal to the starting calendar day"` — `CALENDAR_ADVANCE` defaults to
+  1, which requires `START_DAY` = day component of `PRISTART`. Both
+  baked-in `.inp` files use `START_DAY = 81` and `PRISTART = 81 0 0 0`.
+  If you change one, change the other.
 - **`gfortran: error: unrecognized command-line option '-r8'`** — you're
   using `Make.intel_linux` instead of `Make.gfort_linux`. Job script
   defaults to gfortran; only happens if you override.
@@ -318,7 +321,7 @@ Source it once, then use `tiegcm-linux-local.job` the same way.
 
 ```bash
 cd /path/where/you/cloned/tiegcm
-cp local-linux-setup/{setup-local.sh,Make.gfort_linux,tiegcm-linux-local.job,tiegcm_mareqx_smin_z11.inp} .
+cp local-linux-setup/{setup-local.sh,Make.gfort_linux,tiegcm-linux-local.job,tiegcm_test10.inp,tiegcm_mareqx_smin_z11.inp} .
 source setup-local.sh
 cd scripts
 bash tiegcm-linux-local.job

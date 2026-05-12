@@ -126,10 +126,26 @@ bash tiegcm-linux-local.job
 That's it. The job script:
 - Auto-picks `tiegcm_mareqx_smin_z11.inp` (baked-in v3.0-ready namelist).
 - Uses `zitop=11` (matches v3.0 startup files — 73 vertical levels).
-- Runs `mpirun -np 4 ./tiegcm`.
+- Runs `mpirun -np 1 ./tiegcm` (default; raise with `TIEGCM_NPROC` on
+  native amd64 — see env-var table below).
 
 First-ever run = full build (~5–10 min) + 1-day integration
-(15–45 min on M3 under Rosetta). Subsequent runs reuse the binary.
+(15–45 min on M3 under Rosetta, faster on native amd64). Subsequent runs
+reuse the binary.
+
+#### Quick smoke run (10 timesteps, ~5 model-minutes)
+
+To confirm the build is healthy without waiting for a full day-long
+integration, point the job script at the bundled tiny namelist:
+
+```bash
+TIEGCM_INP=/workspace/tiegcm/scripts/tiegcm_test10.inp \
+    bash /workspace/tiegcm/scripts/tiegcm-linux-local.job
+```
+
+This runs 10 × 30s timesteps (= 5 minutes of simulated time) and writes
+one primary + a handful of secondary histories. Useful as a sanity check
+after rebuilding the image or changing build flags.
 
 Watch progress in another shell:
 ```bash
@@ -177,7 +193,7 @@ the baked-in defaults:
 |---|---|---|
 | `TIEGCM_INP` | baked-in `tiegcm_mareqx_smin_z11.inp` | path to your custom namelist |
 | `TIEGCM_ZITOP` | `11` | upper boundary pressure level (7 = low top, 11 = high top) |
-| `TIEGCM_NPROC` | `4` | MPI process count |
+| `TIEGCM_NPROC` | `1` | MPI process count. Default is 1 because >1 segfaults under Open MPI + Rosetta on Apple Silicon; on native amd64 (e.g. DigitalOcean droplets) you can safely raise it (`TIEGCM_NPROC=4`). |
 | `TIEGCM_DEBUG` | `FALSE` | `TRUE` → `-Og -fcheck=all -fbacktrace` |
 | `TIEGCM_EXECUTE` | `TRUE` | `FALSE` → build only, skip `mpirun` |
 

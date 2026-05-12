@@ -5,3 +5,8 @@
 .vscode/
 __pycache__/
 *.pyc
+# Local working dirs (bind-mount targets)
+tiegcm-wd/
+work/
+tiegcm_data/
+*.nc

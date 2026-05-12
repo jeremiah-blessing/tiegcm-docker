@@ -1,0 +1,298 @@
+#!/bin/bash
+#
+# Job script to build (and optionally run) TIEGCM v3.0 on a local Linux box
+# using a conda-forge env that provides gfortran, OpenMPI, HDF5, netCDF, ESMF.
+#
+# Prereq: `source setup-local.sh` first, so TIEGCMHOME / TIEGCMDATA / ESMFMKFILE
+#         / CONDA_PREFIX are set and mpif90 is on PATH.
+#
+# User-tunable variables below. First run: leave execute="FALSE" so we just
+# verify the build. Flip to "TRUE" once you have data files in TIEGCMDATA.
+#
+modeldir="${TIEGCMHOME:-/workspace/tiegcm}"
+execdir="/workspace/tiegcm-run/default"
+tgcmdata="${TIEGCMDATA:-/workspace/tiegcm-data}"
+utildir="$modeldir/scripts"
+# Namelist resolution order:
+#   1. TIEGCM_INP env var (set this to point at a custom .inp on the host mount)
+#   2. baked-in v3.0-ready namelist for the mareqx_smin z=11 scenario
+#   3. repo's tiegcm_default.inp (v2.0-style timestamps, won't work with v3.0 data)
+if [ -n "$TIEGCM_INP" ]; then
+    input="$TIEGCM_INP"
+elif [ -f "$utildir/tiegcm_mareqx_smin_z11.inp" ]; then
+    input="$utildir/tiegcm_mareqx_smin_z11.inp"
+else
+    input="$utildir/tiegcm_default.inp"
+fi
+output="tiegcm.out"
+make="Make.gfort_linux"
+horires="2.5"
+vertres="0.25"
+# zitop=11 matches the NCAR v3.0 high-top startup distribution (73 levels).
+# Set zitop=7 only if you have a low-top startup file.
+zitop="${TIEGCM_ZITOP:-11}"
+mres="2"
+coupling="FALSE"
+hidra="FALSE"
+nproc="${TIEGCM_NPROC:-1}"   # nproc>1 crashes under Open MPI + Rosetta on M-series Macs; override with TIEGCM_NPROC=4 on native Linux
+debug="${TIEGCM_DEBUG:-FALSE}"
+# Default to running the model. Set TIEGCM_EXECUTE=FALSE before invoking
+# this script to build-only (useful for sanity-checking new compiler flags).
+execute="${TIEGCM_EXECUTE:-TRUE}"
+#
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#                  Shell Script for TIEGCM local Linux job
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#
+mycwd=`pwd`
+echo "" ; echo "${0}:"
+echo "  Begin execution at `date`"
+echo "  Current working directory: $mycwd"
+echo "  System: `uname -a`"
+echo ""
+
+# Sanity checks on the conda env having been activated.
+if [ -z "$CONDA_PREFIX" ]; then
+  echo ">>> CONDA_PREFIX is not set. Did you 'source setup-local.sh'? <<<"
+  exit 1
+fi
+if [ -z "$ESMFMKFILE" ] || [ ! -f "$ESMFMKFILE" ]; then
+  echo ">>> ESMFMKFILE is not set or missing: '$ESMFMKFILE' <<<"
+  exit 1
+fi
+if ! command -v mpif90 >/dev/null 2>&1; then
+  echo ">>> mpif90 not found on PATH. Activate the tiegcm conda env first. <<<"
+  exit 1
+fi
+
+if [ ! -d $modeldir ]
+then
+  echo ">>> Cannot find model directory $modeldir <<<"
+  exit 1
+fi
+model=`basename $modeldir`
+
+if [ $model == "" ]
+then
+  echo "Please remove trailing slash from modeldir $modeldir"
+  exit
+fi
+
+if [ ! -d $utildir ]
+then
+  echo ">>> Cannot find model scripts directory $utildir <<<"
+  exit 1
+fi
+
+srcdir="$modeldir/src"
+if [ ! -d $srcdir ]
+then
+  echo ">>> Cannot find model source directory $srcdir <<<"
+  exit 1
+fi
+srcdir=`perl $utildir/abspath $srcdir`
+
+if [ ! -d $execdir ]
+then
+  echo "Making exec directory $execdir"
+  mkdir -p $execdir
+fi
+#
+# Data directory:
+#
+if [ -v tgcmdata ]
+then
+  mkdir -p "$tgcmdata"
+  tgcmdata=`perl $utildir/abspath $tgcmdata`
+  export TGCMDATA=$tgcmdata
+  echo "Set env var TGCMDATA = $TGCMDATA"
+else
+  if [ -v TGCMDATA ]
+  then
+    tgcmdata=$TGCMDATA
+    echo "Set tgcmdata = $TGCMDATA"
+  else
+    echo "WARNING: TGCMDATA is not set - using cwd"
+    tgcmdata=.
+    export TGCMDATA=$tgcmdata
+  fi
+fi
+if [ ! -d $tgcmdata ]
+then
+  echo ">>> Cannot find data directory $tgcmdata"
+fi
+
+if [ $horires != "5" ] && [ $horires != "2.5" ] && [ $horires != "1.25" ] && [ $horires != "0.625" ]
+then
+  echo ">>> Unknown model horizontal resolution $horires <<<"
+  exit 1
+fi
+if [ $vertres != "0.5" ] && [ $vertres != "0.25" ] && [ $vertres != "0.125" ] && [ $vertres != "0.0625" ]
+then
+  echo ">>> Unknown model vertical resolution $vertres <<<"
+  exit 1
+fi
+
+if [ $mres == "2" ]
+then
+  nres_grid=5
+elif [ $mres == "1" ]
+then
+  nres_grid=6
+elif [ $mres == "0.5" ]
+then
+  nres_grid=7
+else
+  echo ">>> Unsupported magnetic resolution $mres <<<"
+  exit 1
+fi
+#
+# Copy make files to execdir.
+#
+if [ -f $make ]
+then
+  cp $make $execdir
+  echo "Copied $make to $execdir"
+else
+  cp $utildir/$make $execdir
+  echo "Copied $utildir/$make to $execdir"
+fi
+if [ ! -f $execdir/Makefile ]
+then
+  cp $utildir/Makefile $execdir
+fi
+if [ ! -f $execdir/mkdepends ]
+then
+  cp $utildir/mkdepends $execdir
+fi
+#
+if [ ! -f $input ]
+then
+  echo ">>> Cannot find namelist input file $input <<<"
+  exit 1
+fi
+input=`perl $utildir/abspath $input`
+output=`perl $utildir/abspath $output`
+util=`perl $utildir/abspath $utildir`
+mklogs=$util/mklogs
+rmbinchars=$util/rmbinchars
+
+svn_revision="tiegcm3.0"
+
+echo -n "  Model directory:   $modeldir"
+echo " (SVN revision $svn_revision)"
+echo "  Exec directory:    $execdir"
+echo "  Source directory:  $srcdir"
+echo "  Data directory:    $tgcmdata"
+echo "  Make machine file: $make"
+echo "  Namelist input:    $input"
+echo "  Model resolution:  $horires x $vertres"
+echo "  Coupling:          $coupling"
+echo "  Hidra:             $hidra"
+echo "  Debug flag:        $debug"
+echo "  ESMFMKFILE:        $ESMFMKFILE"
+echo "  CONDA_PREFIX:      $CONDA_PREFIX"
+#
+# If coupling/hidra/debug flags changed since last build, clean execdir.
+#
+for flagvar in coupling hidra debug
+do
+  flagval=$(eval echo \$$flagvar)
+  if [ -f $execdir/$flagvar ]
+  then
+    last=$(cat $execdir/$flagvar)
+    if [ "$last" != "$flagval" ]
+    then
+      echo "Clean execdir $execdir because $flagvar flag switched from $last to $flagval"
+      ( cd $execdir && gmake clean )
+      echo $flagval > $execdir/$flagvar
+    fi
+  else
+    echo $flagval > $execdir/$flagvar
+    echo "Created file $flagvar with $flagvar flag = $flagval"
+  fi
+done
+#
+# defs.h for the requested resolution.
+#
+defs=defs.h
+
+cat << EOF > $defs
+#define DLAT $horires
+#define DLON $horires
+#define GLON1 -180
+#define DLEV $vertres
+#define ZIBOT -7
+#define ZITOP $zitop
+#define NRES_GRID $nres_grid
+EOF
+
+if [ -f $execdir/defs.h ]
+then
+  cmp -s $execdir/defs.h $defs
+  status=$?
+  if [ $status -ne 0 ]
+  then
+    echo "Switching defs.h for model resolution $horires x $vertres"
+    ( cd $execdir && gmake clean )
+    cp $defs $execdir/defs.h
+  else
+    echo "defs.h already set for model resolution $horires x $vertres"
+  fi
+else
+  echo "Copying $defs to $execdir/defs.h for resolution $horires x $vertres"
+  cp $defs $execdir/defs.h
+fi
+#
+cd $execdir
+status=$?
+if [ $status -ne 0 ]
+then
+  echo ">>> Cannot cd to execdir $execdir"
+  exit 1
+fi
+echo ""
+echo "Begin building $model in `pwd`"
+#
+cat << EOF > Make.env
+MAKE_MACHINE  = $make
+DIRS          = . $srcdir
+NPROC         = $nproc
+EXECNAME      = $model
+NAMELIST      = $input
+OUTPUT        = $output
+COUPLING      = $coupling
+HIDRA         = $hidra
+DEBUG         = $debug
+SVN_REVISION  = $svn_revision
+EOF
+#
+gmake machines.ini
+gmake mpirun.command
+mpirun=`cat mpirun.command`
+#
+compiler="gfortran"
+echo "Compiler: $compiler"
+#
+gmake -j4 all
+status=$?
+if [ $status -ne 0 ]
+then
+  echo ">>> Error return from gmake all"
+  exit 1
+fi
+#
+if [ $execute == "TRUE" ]
+then
+  model=./$model
+  echo "$model output will go to $output"
+  echo "Executing $mpirun with executable $model at `date`"
+  $mpirun -machinefile machines.ini -np $nproc $model $input >& $output
+
+  echo "Linux MPI run of $model completed at `date`"
+  $rmbinchars $output
+  echo "Skipping mklogs (gfortran build)"
+else
+  echo "I am NOT executing $model (execute was not set)"
+fi
+exit 0

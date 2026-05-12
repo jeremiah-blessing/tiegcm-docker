@@ -8,10 +8,6 @@ on:
     branches: [master, main]
   workflow_dispatch:
     inputs:
-      tiegcm_ref:
-        description: "TIEGCM ref (branch / tag / SHA) to build"
-        required: false
-        default: master
       push_image:
         description: "Push to Docker Hub even on a manual run?"
         required: false
@@ -27,7 +23,6 @@ on:
 
 env:
   REGISTRY: docker.io
-  # Falls back to <username>/<repo-name> if DOCKERHUB_IMAGE is not set.
   IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE || format('{0}/{1}', secrets.DOCKERHUB_USERNAME, github.event.repository.name) }}
 
 jobs:
@@ -81,23 +76,30 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          # amd64 only — upstream NCAR/tiegcm targets x86_64 Linux (Derecho,
-          # Pleiades). Apple Silicon hosts can still run this image via
-          # Rosetta. To add native arm64, append ",linux/arm64" — note that
-          # arm64 builds run under QEMU on free GHA runners and are 3-5x
-          # slower than amd64.
+          # amd64 only — upstream NCAR/tiegcm targets x86_64 Linux. Apple
+          # Silicon hosts run this image via Rosetta; DigitalOcean droplets
+          # are native amd64.
           platforms: linux/amd64
           push: ${{ steps.push_decision.outputs.push == 'true' }}
           load: ${{ steps.push_decision.outputs.push != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            TIEGCM_REF=${{ inputs.tiegcm_ref || 'master' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke-test image
         if: steps.push_decision.outputs.push != 'true'
         run: |
-          docker run --rm ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} \
-              bash -c 'ls -lh /opt/tiegcm/exec/tiegcm && /opt/tiegcm/exec/tiegcm 2>&1 | head -5 || true'
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          docker run --rm "$IMAGE_TAG" bash -lc '
+            set -e
+            command -v mpif90
+            command -v gfortran
+            command -v nf-config
+            test -f "$ESMFMKFILE"
+            test -d /workspace/tiegcm
+            test -f /workspace/tiegcm/scripts/tiegcm-linux-local.job
+            test -f /workspace/tiegcm/scripts/tiegcm_mareqx_smin_z11.inp
+            echo "Smoke test OK: ESMFMKFILE=$ESMFMKFILE"
+            git -C /workspace/tiegcm log -1 --oneline
+          '
